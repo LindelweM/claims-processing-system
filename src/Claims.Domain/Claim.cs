@@ -67,13 +67,13 @@ public sealed class Claim
     /// </summary>
     public string? FailureReason { get; private set; }
 
-    /// <summary>Audit trail of every state the claim has moved through, oldest first.</summary>
+    /// <summary>Audit trail of everything recorded against the claim, oldest first.</summary>
     public IReadOnlyList<ClaimStatusHistory> History => _history;
 
     /// <summary>
     /// True once a breach has been recorded by <see cref="FlagSlaBreach"/>. This is a stored
-    /// flag, not a live calculation, so it stays false until something flags it. Use
-    /// <see cref="IsSlaBreached"/> to evaluate the deadline as at a point in time.
+    /// flag, not a live calculation, so it stays false until something flags it, however far
+    /// past <see cref="Deadline"/> the claim is.
     /// </summary>
     public bool SlaBreached { get; private set; }
 
@@ -82,7 +82,7 @@ public sealed class Claim
     }
 
     /// <summary>
-    /// Lodges a new claim, placing it in <see cref="ClaimStatus.Submitted"/> and opening its audit trail.
+    /// Lodges a new claim, placing it in <see cref="ClaimStatus.Received"/> and opening its audit trail.
     /// </summary>
     /// <param name="claimReference">Human-readable reference quoted to the claimant.</param>
     /// <param name="type">Category of cover being claimed.</param>
@@ -135,8 +135,8 @@ public sealed class Claim
         Transition(ClaimStatus.Validating, occurredAt, "Validation started");
 
     /// <summary>
-    /// Records that the client registry matched the claimant, linking the claim to the client.
-    /// Leaves the claim in its current state.
+    /// Records that the client registry matched the claimant, linking the claim to the client
+    /// and moving it to <see cref="ClaimStatus.ClientValidated"/>.
     /// </summary>
     /// <param name="clientId">Registry's identifier for the matched client.</param>
     /// <param name="occurredAt">When the claimant was validated.</param>
@@ -147,10 +147,11 @@ public sealed class Claim
     }
 
     /// <summary>
-    /// Records that the policy manager confirmed cover, moving the claim on to assessment.
+    /// Records that the policy manager confirmed cover, taking the amount it authorised.
     /// </summary>
+    /// <param name="approvedAmount">Amount the policy manager authorised.</param>
+    /// <param name="currency">ISO 4217 currency code for <paramref name="approvedAmount"/>.</param>
     /// <param name="occurredAt">When cover was confirmed.</param>
-    /// <param name="detail">What the policy manager confirmed.</param>
     public void MarkPolicyValidated(decimal approvedAmount, string currency, DateTimeOffset occurredAt)
     {
         ApprovedAmount = approvedAmount;
@@ -159,19 +160,17 @@ public sealed class Claim
     }
 
     /// <summary>
-    /// Approves the claim for the amount the policy manager authorised, moving it to
-    /// <see cref="ClaimStatus.Approved"/>, or to <see cref="ClaimStatus.PartiallyApproved"/>
-    /// when less than the amount claimed was authorised.
+    /// Moves the claim to <see cref="ClaimStatus.Approved"/>, recording the approved amount
+    /// on the audit trail. The amount itself is stored by <see cref="MarkPolicyValidated"/>.
     /// </summary>
-    /// <param name="approvedAmount">Amount approved, which may be less than the amount claimed.</param>
+    /// <param name="approvedAmount">Amount approved, quoted on the audit trail entry.</param>
     /// <param name="occurredAt">When the approval was made.</param>
     public void Approve(decimal approvedAmount, DateTimeOffset occurredAt)
     {
         Transition(ClaimStatus.Approved, occurredAt, $"Approved for {approvedAmount:0.00} {Currency}");
-    
     }
 
-    /// <summary>Rejects the claim, closing it.</summary>
+    /// <summary>Rejects the claim, ending its processing.</summary>
     /// <param name="reason">Why the claim was rejected.</param>
     /// <param name="occurredAt">When the rejection was made.</param>
     public void Reject(string reason, DateTimeOffset occurredAt)
@@ -181,8 +180,8 @@ public sealed class Claim
     }
 
     /// <summary>
-    /// Records that a payment has been instructed against the approved claim.
-    /// Leaves the claim in its current state until the provider reports the outcome.
+    /// Records that a payment has been instructed against the approved claim, moving it to
+    /// <see cref="ClaimStatus.PaymentRequested"/> until the provider reports the outcome.
     /// </summary>
     /// <param name="paymentReference">Payment provider's reference for the disbursement.</param>
     /// <param name="occurredAt">When the payment was instructed.</param>
@@ -193,7 +192,7 @@ public sealed class Claim
         Transition(ClaimStatus.PaymentRequested, occurredAt, $"Payment requested ({paymentReference})");
     }
 
-    /// <summary>Records that the payment cleared, settling the claim.</summary>
+    /// <summary>Records that the payment cleared, moving the claim to <see cref="ClaimStatus.Paid"/>.</summary>
     /// <param name="occurredAt">When the payment settled.</param>
     public void MarkPaid(DateTimeOffset occurredAt)
     {
@@ -202,8 +201,8 @@ public sealed class Claim
     }
 
     /// <summary>
-    /// Records that the payment did not go through. The claim stays approved so the
-    /// payment can be reinstructed once the cause is resolved.
+    /// Records that the payment did not go through, moving the claim to
+    /// <see cref="ClaimStatus.PaymentFailed"/> so it can be picked up for reinstruction.
     /// </summary>
     /// <param name="reason">Provider's explanation for the failure.</param>
     /// <param name="occurredAt">When the failure was reported.</param>
@@ -214,13 +213,17 @@ public sealed class Claim
         Transition(ClaimStatus.PaymentFailed, occurredAt, $"Payment failed: {reason}");
     }
 
-    /// <summary>Closes the claim once settlement is done and no further work is expected.</summary>
+    /// <summary>
+    /// Moves the claim to <see cref="ClaimStatus.Completed"/> once settlement is done
+    /// and no further work is expected.
+    /// </summary>
     /// <param name="occurredAt">When the claim was completed.</param>
     public void Completed(DateTimeOffset occurredAt) =>
         Transition(ClaimStatus.Completed, occurredAt, "Claim completed");
 
     /// <summary>
-    /// Closes the claim because it could not be processed, recording why.
+    /// Moves the claim to <see cref="ClaimStatus.Failed"/> because it could not be
+    /// processed, recording why.
     /// </summary>
     /// <param name="reason">Why the claim could not be processed.</param>
     /// <param name="occurredAt">When processing failed.</param>
@@ -253,7 +256,10 @@ public sealed class Claim
     /// <param name="toStatus">State to move the claim into.</param>
     /// <param name="occurredAt">When the transition occurred.</param>
     /// <param name="detail">Why the claim is moving.</param>
-    /// <exception cref="InvalidOperationException">The claim has already reached a closed state.</exception>
+    /// <remarks>
+    /// Any state may move to any other: there is no guard on terminal states, so a claim that
+    /// has already failed or completed can still be moved on.
+    /// </remarks>
     public void Transition(ClaimStatus toStatus, DateTimeOffset occurredAt, string? detail = null)
     {
         if (toStatus == Status)
