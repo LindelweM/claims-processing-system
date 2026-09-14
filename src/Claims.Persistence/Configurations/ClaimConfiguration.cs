@@ -61,6 +61,34 @@ public sealed class ClaimConfiguration : IEntityTypeConfiguration<Claim>
         builder.Property(c => c.ClientId)
             .HasMaxLength(64);
 
+        builder.Property(c => c.ClaimantFirstName)
+            .HasMaxLength(100)
+            .IsRequired();
+
+        builder.Property(c => c.ClaimantLastName)
+            .HasMaxLength(100)
+            .IsRequired();
+
+        builder.Property(c => c.ClaimantIdNumber)
+            .HasMaxLength(20)
+            .IsRequired();
+
+        builder.Property(c => c.AccountHolder)
+            .HasMaxLength(100)
+            .IsRequired();
+
+        builder.Property(c => c.AccountNumber)
+            .HasMaxLength(34)
+            .IsRequired();
+
+        builder.Property(c => c.BranchCode)
+            .HasMaxLength(20)
+            .IsRequired();
+
+        builder.Property(c => c.BankName)
+            .HasMaxLength(100)
+            .IsRequired();
+
         builder.Property(c => c.IncidentDate)
             .HasColumnType("date");
 
