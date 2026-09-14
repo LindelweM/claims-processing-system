@@ -29,6 +29,19 @@ public sealed class ClaimConfiguration : IEntityTypeConfiguration<Claim>
         builder.HasIndex(c => c.ClaimReference)
             .IsUnique();
 
+        builder.Property(c => c.Channel)
+            .HasMaxLength(32)
+            .IsRequired();
+
+        builder.Property(c => c.ChannelReference)
+            .HasMaxLength(100);
+
+        // A channel that resends a submission must get the original claim back rather than a
+        // second one that could also pay out. Submissions without a reference are not covered.
+        builder.HasIndex(c => new { c.Channel, c.ChannelReference })
+            .IsUnique()
+            .HasFilter("[ChannelReference] IS NOT NULL");
+
         // Enums are stored as text so the table stays readable to anyone auditing a claim,
         // and so reordering the enum cannot silently remap existing rows.
         builder.Property(c => c.Type)
