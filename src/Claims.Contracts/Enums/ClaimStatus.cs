@@ -17,5 +17,12 @@ public enum ClaimStatus
     Rejected = 9,
     Settled = 10,
     Closed = 11,
-    Cancelled = 12
+    Cancelled = 12,
+    ClientValidated = 13,
+    PolicyValidated = 14,
+    PaymentRequested = 15,
+    Paid = 16,
+    PaymentFailed = 17,
+    Completed = 18,
+    Failed = 19
 }

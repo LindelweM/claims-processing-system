@@ -34,6 +34,30 @@ public sealed class Claim
     /// <summary>Client registry's identifier for the claimant, set once the claimant is validated.</summary>
     public string? ClientId { get; private set; }
 
+    /// <summary>Claimant's given name, as captured at intake.</summary>
+    public string ClaimantFirstName { get; private set; } = null!;
+
+    /// <summary>Claimant's family name, as captured at intake.</summary>
+    public string ClaimantLastName { get; private set; } = null!;
+
+    /// <summary>
+    /// National identifier of the claimant, which may differ from the policyholder's where the
+    /// claim is lodged by a dependant or beneficiary.
+    /// </summary>
+    public string ClaimantIdNumber { get; private set; } = null!;
+
+    /// <summary>Name the account being paid is registered in.</summary>
+    public string AccountHolder { get; private set; } = null!;
+
+    /// <summary>Number of the account an approved claim is paid into.</summary>
+    public string AccountNumber { get; private set; } = null!;
+
+    /// <summary>Branch or routing code for the account.</summary>
+    public string BranchCode { get; private set; } = null!;
+
+    /// <summary>Name of the bank holding the account.</summary>
+    public string BankName { get; private set; } = null!;
+
     /// <summary>Date on which the incident or loss occurred.</summary>
     public DateOnly IncidentDate { get; private set; }
 
@@ -127,6 +151,39 @@ public sealed class Claim
             claim.Id, ClaimStatus.Received, submittedDate, detail: "Claim received"));
 
         return claim;
+    }
+
+    /// <summary>
+    /// Records who is claiming, so the client registry can be called without the submission
+    /// being carried alongside the claim.
+    /// </summary>
+    /// <param name="firstName">Claimant's given name.</param>
+    /// <param name="lastName">Claimant's family name.</param>
+    /// <param name="idNumber">National identifier of the claimant.</param>
+    public void RecordClaimant(string firstName, string lastName, string idNumber)
+    {
+        ClaimantFirstName = firstName;
+        ClaimantLastName = lastName;
+        ClaimantIdNumber = idNumber;
+    }
+
+    /// <summary>
+    /// Records the account an approved claim will be paid into.
+    /// </summary>
+    /// <param name="accountHolder">Name the account is registered in.</param>
+    /// <param name="accountNumber">Number of the account to be paid.</param>
+    /// <param name="branchCode">Branch or routing code for the account.</param>
+    /// <param name="bankName">Name of the bank holding the account.</param>
+    public void RecordBankingDetails(
+        string accountHolder,
+        string accountNumber,
+        string branchCode,
+        string bankName)
+    {
+        AccountHolder = accountHolder;
+        AccountNumber = accountNumber;
+        BranchCode = branchCode;
+        BankName = bankName;
     }
 
     /// <summary>Moves the claim into validation, where the claimant and policy are checked.</summary>

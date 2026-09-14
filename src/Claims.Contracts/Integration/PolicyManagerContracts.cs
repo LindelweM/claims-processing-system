@@ -69,11 +69,22 @@ public sealed record PolicyVerificationResponse
 
     /// <summary>Creates a verdict declining cover for the claim.</summary>
     /// <param name="reason">Why cover was declined.</param>
-    public static PolicyVerificationResponse Declined(string reason) => new()
+    /// <param name="policyActive">
+    /// Whether the policy was in force on the incident date. True when the decline is for some
+    /// other reason, which tells an assessor the policy itself is not the problem.
+    /// </param>
+    /// <param name="benefitCovered">
+    /// Whether the policy's benefits extend to the claim type. True when the decline is for some
+    /// other reason.
+    /// </param>
+    public static PolicyVerificationResponse Declined(
+        string reason,
+        bool policyActive = false,
+        bool benefitCovered = false) => new()
     {
         IsValid = false,
-        PolicyActive = false,
-        BenefitCovered = false,
+        PolicyActive = policyActive,
+        BenefitCovered = benefitCovered,
         ApprovedAmount = 0m,
         Currency = null,
         FailureReason = reason
