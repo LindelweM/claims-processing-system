@@ -6,11 +6,8 @@ namespace Claims.Contracts.Enums;
 public enum ClaimType
 {
     Unknown = 0,
-    Medical = 1,
-    Motor = 2,
-    Property = 3,
-    Travel = 4,
-    Liability = 5,
-    Life = 6,
-    Disability = 7
+    Death = 1,
+    Funeral = 2,
+    DreadDisease = 3,
+    Disability = 4
 }

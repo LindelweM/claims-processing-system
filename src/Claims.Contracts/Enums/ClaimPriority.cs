@@ -6,8 +6,7 @@ namespace Claims.Contracts.Enums;
 public enum ClaimPriority
 {
     Unknown = 0,
-    Low = 1,
-    Normal = 2,
-    High = 3,
-    Urgent = 4
+    Standard = 1,
+    High = 2,
+    Critical = 3
 }
