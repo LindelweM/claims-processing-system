@@ -10,9 +10,11 @@ public sealed record ClaimSubmissionRequest
 {
     /// <summary>The submission channel, such as the web form, mobile app or broker feed.</summary>
     [Required]
+    [StringLength(32)]
     public string Channel { get; init; } = "WebForm";
 
     /// <summary>Optional reference supplied by the channel, echoed back for reconciliation.</summary>
+    [StringLength(100)]
     public string? ChannelReference { get; init; }
 
     /// <summary>Category of cover being claimed.</summary>
@@ -43,13 +45,16 @@ public sealed record ClaimantInfo
 {
     /// <summary>Claimant's given name.</summary>
     [Required]
+    [StringLength(100)]
     public required string FirstName { get; init; }
 
     /// <summary>Claimant's family name.</summary>
     [Required]
+    [StringLength(100)]
     public required string LastName { get; init; }
 
     /// <summary>National or member identifier, where the channel captures one.</summary>
+    [StringLength(20)]
     public string? IdentityNumber { get; init; }
 
     /// <summary>Email address used to correspond with the claimant.</summary>
@@ -82,6 +87,7 @@ public sealed record IncidentInfo
 
     /// <summary>ISO 4217 currency code for <see cref="ClaimAmount"/>.</summary>
     [Required]
+    [StringLength(3, MinimumLength = 3)]
     public required string Currency { get; init; }
 }
 
@@ -92,10 +98,12 @@ public sealed record PolicyInfo
 {
     /// <summary>Number identifying the policy being claimed against.</summary>
     [Required]
+    [StringLength(50)]
     public required string PolicyNumber { get; init; }
 
     /// <summary>National identifier of the policyholder, used to match the claim to the policy.</summary>
     [Required]
+    [StringLength(20)]
     public required string PolicyholderIdNumber { get; init; }
 }
 
@@ -106,17 +114,21 @@ public sealed record BankingDetails
 {
     /// <summary>Name the account is registered in.</summary>
     [Required]
+    [StringLength(100)]
     public required string AccountHolder { get; init; }
 
     /// <summary>Number of the account to be paid.</summary>
     [Required]
+    [StringLength(34)]
     public required string AccountNumber { get; init; }
 
     /// <summary>Branch or routing code for the account.</summary>
     [Required]
+    [StringLength(20)]
     public required string BranchCode { get; init; }
 
     /// <summary>Name of the bank holding the account.</summary>
     [Required]
+    [StringLength(100)]
     public required string BankName { get; init; }
 }

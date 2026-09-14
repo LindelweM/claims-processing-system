@@ -9,7 +9,7 @@ namespace Claims.Functions.Models;
 /// instruction; the orchestration still waits for the settlement callback before completing
 /// the claim.
 /// </remarks>
-public sealed class PaymentInitiationActivityResults
+public sealed class PaymentInitiationActivityResult
 {
     /// <summary>True when the provider accepted the instruction for processing.</summary>
     public required bool Accepted { get; init; }

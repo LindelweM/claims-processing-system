@@ -16,6 +16,15 @@ public sealed class Claim
     /// <summary>Human-readable reference quoted to the claimant.</summary>
     public string ClaimReference { get; private set; } = null!;
 
+    /// <summary>Channel the claim was lodged through, such as the web form.</summary>
+    public string Channel { get; private set; } = null!;
+
+    /// <summary>
+    /// The channel's own reference for the submission, where it supplies one. Unique per
+    /// channel, so a resubmitted form resolves to the claim it already created.
+    /// </summary>
+    public string? ChannelReference { get; private set; }
+
     /// <summary>Category of cover being claimed.</summary>
     public ClaimType Type { get; private set; }
 
@@ -109,6 +118,8 @@ public sealed class Claim
     /// Lodges a new claim, placing it in <see cref="ClaimStatus.Received"/> and opening its audit trail.
     /// </summary>
     /// <param name="claimReference">Human-readable reference quoted to the claimant.</param>
+    /// <param name="channel">Channel the claim was lodged through.</param>
+    /// <param name="channelReference">The channel's own reference for the submission, if any.</param>
     /// <param name="type">Category of cover being claimed.</param>
     /// <param name="policyNumber">Number of the policy being claimed against.</param>
     /// <param name="policyholderIdNumber">National identifier of the policyholder.</param>
@@ -121,6 +132,8 @@ public sealed class Claim
     /// <returns>The newly lodged claim.</returns>
     public static Claim Submit(
         string claimReference,
+        string channel,
+        string? channelReference,
         ClaimType type,
         string policyNumber,
         string policyholderIdNumber,
@@ -134,6 +147,8 @@ public sealed class Claim
         var claim = new Claim
         {
             ClaimReference = claimReference,
+            Channel = channel,
+            ChannelReference = channelReference,
             Type = type,
             Status = ClaimStatus.Received,
             Priority = priority,
