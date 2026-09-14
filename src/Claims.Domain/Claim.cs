@@ -77,10 +77,6 @@ public sealed class Claim
     /// </summary>
     public bool SlaBreached { get; private set; }
 
-    /// <summary>True once the claim has reached a state it will not move out of.</summary>
-    public bool IsClosed =>
-        Status is ClaimStatus.Closed or ClaimStatus.Rejected or ClaimStatus.Cancelled;
-
     private Claim()
     {
     }
@@ -115,7 +111,7 @@ public sealed class Claim
         {
             ClaimReference = claimReference,
             Type = type,
-            Status = ClaimStatus.Submitted,
+            Status = ClaimStatus.Received,
             Priority = priority,
             PolicyNumber = policyNumber,
             PolicyholderIdNumber = policyholderIdNumber,
@@ -128,18 +124,9 @@ public sealed class Claim
         };
 
         claim._history.Add(ClaimStatusHistory.Record(
-            claim.Id, ClaimStatus.Submitted, submittedDate, detail: "Claim submitted"));
+            claim.Id, ClaimStatus.Received, submittedDate, detail: "Claim received"));
 
         return claim;
-    }
-
-    /// <summary>Reassigns the priority the claim is worked at.</summary>
-    /// <param name="priority">Priority to work the claim at.</param>
-    /// <param name="occurredAt">When the reassignment happened.</param>
-    public void SetPriority(ClaimPriority priority, DateTimeOffset occurredAt)
-    {
-        Priority = priority;
-        LastUpdatedAt = occurredAt;
     }
 
     /// <summary>Moves the claim into validation, where the claimant and policy are checked.</summary>
@@ -156,8 +143,7 @@ public sealed class Claim
     public void MarkClientValidated(string clientId, DateTimeOffset occurredAt)
     {
         ClientId = clientId;
-        AddHistory(Status, occurredAt, $"Client validated against registry ({clientId})");
-        LastUpdatedAt = occurredAt;
+        Transition(ClaimStatus.ClientValidated, occurredAt, $"Client validated against registry ({clientId})");
     }
 
     /// <summary>
@@ -165,8 +151,12 @@ public sealed class Claim
     /// </summary>
     /// <param name="occurredAt">When cover was confirmed.</param>
     /// <param name="detail">What the policy manager confirmed.</param>
-    public void MarkPolicyValidated(DateTimeOffset occurredAt, string? detail = null) =>
-        Transition(ClaimStatus.UnderReview, occurredAt, detail ?? "Policy cover confirmed");
+    public void MarkPolicyValidated(decimal approvedAmount, string currency, DateTimeOffset occurredAt)
+    {
+        ApprovedAmount = approvedAmount;
+        Currency = currency;
+        Transition(ClaimStatus.ClientValidated, occurredAt, $"Policy validated, approved {approvedAmount:0.00} {currency}");
+    }
 
     /// <summary>
     /// Approves the claim for the amount the policy manager authorised, moving it to
@@ -177,11 +167,8 @@ public sealed class Claim
     /// <param name="occurredAt">When the approval was made.</param>
     public void Approve(decimal approvedAmount, DateTimeOffset occurredAt)
     {
-        var status = approvedAmount < ClaimAmount ? ClaimStatus.PartiallyApproved : ClaimStatus.Approved;
-
-        Transition(status, occurredAt, $"Approved for {approvedAmount:0.00} {Currency}");
-        ApprovedAmount = approvedAmount;
-        PaymentStatus = PaymentState.Pending;
+        Transition(ClaimStatus.Approved, occurredAt, $"Approved for {approvedAmount:0.00} {Currency}");
+    
     }
 
     /// <summary>Rejects the claim, closing it.</summary>
@@ -191,8 +178,6 @@ public sealed class Claim
     {
         Transition(ClaimStatus.Rejected, occurredAt, reason);
         FailureReason = reason;
-        ApprovedAmount = 0m;
-        PaymentStatus = null;
     }
 
     /// <summary>
@@ -205,8 +190,7 @@ public sealed class Claim
     {
         PaymentReference = paymentReference;
         PaymentStatus = PaymentState.Pending;
-        AddHistory(Status, occurredAt, $"Payment requested ({paymentReference})");
-        LastUpdatedAt = occurredAt;
+        Transition(ClaimStatus.PaymentRequested, occurredAt, $"Payment requested ({paymentReference})");
     }
 
     /// <summary>Records that the payment cleared, settling the claim.</summary>
@@ -214,7 +198,7 @@ public sealed class Claim
     public void MarkPaid(DateTimeOffset occurredAt)
     {
         PaymentStatus = PaymentState.Succeeded;
-        Transition(ClaimStatus.Settled, occurredAt, "Payment settled");
+        Transition(ClaimStatus.Paid, occurredAt, "Payment settled");
     }
 
     /// <summary>
@@ -227,14 +211,13 @@ public sealed class Claim
     {
         PaymentStatus = PaymentState.Failed;
         FailureReason = reason;
-        AddHistory(Status, occurredAt, $"Payment failed: {reason}");
-        LastUpdatedAt = occurredAt;
+        Transition(ClaimStatus.PaymentFailed, occurredAt, $"Payment failed: {reason}");
     }
 
     /// <summary>Closes the claim once settlement is done and no further work is expected.</summary>
     /// <param name="occurredAt">When the claim was completed.</param>
     public void Completed(DateTimeOffset occurredAt) =>
-        Transition(ClaimStatus.Closed, occurredAt, "Claim completed");
+        Transition(ClaimStatus.Completed, occurredAt, "Claim completed");
 
     /// <summary>
     /// Closes the claim because it could not be processed, recording why.
@@ -244,7 +227,7 @@ public sealed class Claim
     public void Fail(string reason, DateTimeOffset occurredAt)
     {
         FailureReason = reason;
-        Transition(ClaimStatus.Closed, occurredAt, $"Processing failed: {reason}");
+        Transition(ClaimStatus.Failed, occurredAt, $"Processing failed: {reason}");
     }
 
     /// <summary>
@@ -273,12 +256,6 @@ public sealed class Claim
     /// <exception cref="InvalidOperationException">The claim has already reached a closed state.</exception>
     public void Transition(ClaimStatus toStatus, DateTimeOffset occurredAt, string? detail = null)
     {
-        if (IsClosed)
-        {
-            throw new InvalidOperationException(
-                $"Claim {ClaimReference} is {Status} and cannot move to {toStatus}.");
-        }
-
         if (toStatus == Status)
         {
             return;
@@ -320,13 +297,4 @@ public sealed class Claim
 
         return $"{prefix}-{submittedAt:yyyyMMdd}-{suffix}";
     }
-
-    /// <summary>
-    /// Returns true when the claim is still open and its assessment deadline has passed.
-    /// This evaluates the deadline on demand and does not record anything; call
-    /// <see cref="FlagSlaBreach"/> to record the breach on the claim.
-    /// </summary>
-    /// <param name="asAt">Point in time to evaluate the deadline against.</param>
-    /// <returns>True when the deadline has been missed.</returns>
-    public bool IsSlaBreached(DateTimeOffset asAt) => !IsClosed && asAt > Deadline;
 }
