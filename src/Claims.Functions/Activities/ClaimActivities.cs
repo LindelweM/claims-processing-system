@@ -1,86 +1,77 @@
-using Claims.Contracts.Enums;
 using Claims.Contracts.Integration;
 using Claims.Functions.Models;
-using Claims.Integration.ClientRegistry;
-using Claims.Integration.Payments;
-using Claims.Integration.PolicyManager;
+using Claims.Integration;
 using Claims.Persistence;
 using Microsoft.Azure.Functions.Worker;
 using Microsoft.Extensions.Logging;
 
 namespace Claims.Functions.Activities;
 
-/// <summary>
-/// The steps the claim orchestration runs, each one loading the claim it works on so no
-/// claim detail has to travel through the orchestration's history.
-/// </summary>
-public sealed class ClaimActivities(
-    IClientRegistryClient registry,
-    IPolicyManagerClient policies,
-    IPaymentClient payments,
-    IClaimRepository claims,
-    ILogger<ClaimActivities> logger)
+public class ClaimActivities
 {
-    /// <summary>Name the orchestrator calls <see cref="ValidateClientAsync"/> by.</summary>
-    public const string ValidateClient = nameof(ValidateClient);
+    private readonly IClaimsRepository _claimsRepository;
+    private readonly IClientRegistryClient _clientRegistryClient;
+    private readonly IPolicyManagerClient _policyManagerClient;
+    private readonly IPaymentClient _paymentClient;
+    private readonly ILogger<ClaimActivities> _logger;
 
-    /// <summary>Name the orchestrator calls <see cref="ValidatePolicyAsync"/> by.</summary>
-    public const string ValidatePolicy = nameof(ValidatePolicy);
+    public ClaimActivities(
+        IClaimsRepository claimsRepository,
+        IClientRegistryClient clientRegistryClient,
+        IPolicyManagerClient policyManagerClient,
+        IPaymentClient paymentClient,
+        ILogger<ClaimActivities> logger)
+    {
+        this._claimsRepository = claimsRepository;
+        this._clientRegistryClient = clientRegistryClient;
+        this._policyManagerClient = policyManagerClient;
+        this._paymentClient = paymentClient;
+        this._logger = logger;
+    }
 
-    /// <summary>Name the orchestrator calls <see cref="InitiatePaymentAsync"/> by.</summary>
-    public const string InitiatePayment = nameof(InitiatePayment);
+    [Function(nameof(MarkValidatingActivity))]
+    public async Task MarkValidatingActivity(
+        [ActivityTrigger] Guid claimId,
+        CancellationToken cancellationToken)
+    {
+        _logger.LogInformation("Marking claim {ClaimId} as validating", claimId);
 
-    /// <summary>Name the orchestrator calls <see cref="CompletePaymentAsync"/> by.</summary>
-    public const string CompletePayment = nameof(CompletePayment);
+        var claim = await LoadAsync(claimId, cancellationToken);
+        claim.MarkValidating(DateTimeOffset.UtcNow);
+        await _claimsRepository.SaveChangesAsync(cancellationToken);
+    }
 
-    /// <summary>Name the orchestrator calls <see cref="RejectClaimAsync"/> by.</summary>
-    public const string RejectClaim = nameof(RejectClaim);
 
-    /// <summary>Name the orchestrator calls <see cref="FlagSlaBreachAsync"/> by.</summary>
-    public const string FlagSlaBreach = nameof(FlagSlaBreach);
-
-    /// <summary>
-    /// Resolves the claimant against the client registry and links the matched client to the claim.
-    /// </summary>
-    /// <param name="claimId">Claim whose claimant is being validated.</param>
-    /// <param name="cancellationToken">Token to cancel the activity.</param>
-    /// <returns>The registry's verdict, for the orchestrator to branch on.</returns>
-    [Function(ValidateClient)]
-    public async Task<ClientValidationActivityResult> ValidateClientAsync(
+    [Function(nameof(VerifyClientActivity))]
+    public async Task<ClientValidationResult> VerifyClientActivity(
         [ActivityTrigger] Guid claimId,
         CancellationToken cancellationToken)
     {
         var claim = await LoadAsync(claimId, cancellationToken);
 
-        claim.MarkValidating(DateTimeOffset.UtcNow);
+        _logger.LogInformation(
+            "Validating client for claim {ClaimId}",
+            claim.Id);
 
-        var result = await registry.ValidateAsync(
+        var result = await _clientRegistryClient.ValidateAsync(
             new ClientValidationRequest
             {
                 ClaimId = claim.Id,
                 IdNumber = claim.ClaimantIdNumber,
                 FirstName = claim.ClaimantFirstName,
                 LastName = claim.ClaimantLastName,
-                PolicyholderIdNumber = claim.PolicyholderIdNumber
-            },
-            cancellationToken);
+                PolicyholderIdNumber = claim.PolicyholderIdNumber,
+            }
+            , cancellationToken);
 
-        if (result.IsValid && result.ClientId is not null)
+        if (result.IsValid)
         {
-            claim.MarkClientValidated(result.ClientId, DateTimeOffset.UtcNow);
-        }
-        else
-        {
-            logger.LogWarning(
-                "Claim {ClaimReference} failed client validation: {Reason}",
-                claim.ClaimReference,
-                result.FailureReason);
-        }
+            _logger.LogInformation("Client validation passed for claim {ClaimId}", claim.Id);
 
-        // Saved either way: the claim entering validation is itself worth recording.
-        await claims.SaveChangesAsync(cancellationToken);
-
-        return new ClientValidationActivityResult
+            claim.MarkClientValidated(result.ClientId!, DateTimeOffset.UtcNow);
+            await _claimsRepository.SaveChangesAsync(cancellationToken);
+        }
+        return new ClientValidationResult
         {
             IsValid = result.IsValid,
             ClientId = result.ClientId,
@@ -88,102 +79,80 @@ public sealed class ClaimActivities(
         };
     }
 
-    /// <summary>
-    /// Confirms with the policy manager that the policy covers the claim, and approves the
-    /// claim for the amount authorised.
-    /// </summary>
-    /// <param name="input">Claim to verify, and the client it was matched to.</param>
-    /// <param name="cancellationToken">Token to cancel the activity.</param>
-    /// <returns>The policy manager's verdict, for the orchestrator to branch on.</returns>
-    [Function(ValidatePolicy)]
-    public async Task<PolicyVerificationResponse> ValidatePolicyAsync(
-        [ActivityTrigger] ValidatePolicyActivityInput input,
-        CancellationToken cancellationToken)
+    [Function(nameof(VerifyPolicyActivity))]
+    public async Task<PolicyValidationResult> VerifyPolicyActivity([ActivityTrigger] ValidatePolicyActivityInput input, CancellationToken cancellationToken)
     {
         var claim = await LoadAsync(input.ClaimId, cancellationToken);
 
-        var result = await policies.VerifyAsync(
-            new PolicyVerificationRequest
+        _logger.LogInformation(
+            "Validating policy for claim {ClaimId}",
+            claim.Id);
+
+        var result = await _policyManagerClient.ValidateAsync(
+            new PolicyValidationRequest
             {
                 ClaimId = claim.Id,
                 PolicyNumber = claim.PolicyNumber,
+                PolicyholderIdNumber = claim.PolicyholderIdNumber,
                 ClientId = input.ClientId,
-                IncidentDate = claim.IncidentDate,
-                ClaimType = claim.Type,
+                ClaimType = claim.ClaimType,
                 ClaimAmount = claim.ClaimAmount,
-                Currency = claim.Currency
+                Currency = claim.Currency,
+                IncidentDate = claim.IncidentDate
             },
             cancellationToken);
 
         if (result.IsValid)
         {
-            claim.MarkPolicyValidated(
-                result.ApprovedAmount, result.Currency ?? claim.Currency, DateTimeOffset.UtcNow);
-
-            claim.Approve(result.ApprovedAmount, DateTimeOffset.UtcNow);
-
-            await claims.SaveChangesAsync(cancellationToken);
+            claim.MarkPolicyValidated(result.ApprovedAmount, result.Currency!, DateTimeOffset.UtcNow);
+            await _claimsRepository.SaveChangesAsync(cancellationToken);
+            _logger.LogInformation("Policy validation passed for claim {ClaimId}", claim.Id);
+            return true;
         }
-        else
-        {
-            logger.LogWarning(
-                "Claim {ClaimReference} declined by policy manager: {Reason}",
-                claim.ClaimReference,
-                result.FailureReason);
-        }
-
-        return result;
+       claim.Reject(result.FailureReason!, DateTimeOffset.UtcNow);
+        await _claimsRepository.SaveChangesAsync(cancellationToken);
+        _logger.LogInformation("Policy validation failed for claim {ClaimId}: {FailureReason}", claim.Id, result.FailureReason);
+        return false;
     }
 
-    /// <summary>
-    /// Instructs the payment provider to disburse the approved claim.
-    /// </summary>
-    /// <param name="input">Claim to pay, and where the provider reports settlement.</param>
-    /// <param name="cancellationToken">Token to cancel the activity.</param>
-    /// <returns>The provider's acknowledgement, for the orchestrator to branch on.</returns>
-    [Function(InitiatePayment)]
-    public async Task<PaymentInitiationActivityResults> InitiatePaymentAsync(
-        [ActivityTrigger] InitiatePaymentActivityInput input,
+    [Function(nameof(RequestPaymentActivity))]
+    public async Task<PaymentInstructionResult> RequestPaymentActivity(
+        [ActivityTrigger] InitiatePaymentActivityInput request,
         CancellationToken cancellationToken)
     {
-        var claim = await LoadAsync(input.ClaimId, cancellationToken);
+        var claim = await LoadAsync(request.ClaimId, cancellationToken);
+        var callbackUrl = $"{request.CallbackUrl?.TrimEnd('/')}/api/claims/{claim.Id}/payment-callback";
 
-        // Paying the approved amount, never the amount claimed.
-        var amount = claim.ApprovedAmount
-            ?? throw new InvalidOperationException(
-                $"Claim {claim.ClaimReference} has no approved amount to pay.");
+        _logger.LogInformation(
+            "Requesting payment for claim {ClaimId}",
+            claim.Id);
 
-        var result = await payments.RequestPaymentAsync(
+        var result = await _paymentClient.RequestPaymentAsync(
             new PaymentRequest
             {
                 ClaimId = claim.Id,
                 ClaimReference = claim.ClaimReference,
-                Amount = amount,
+                Amount = claim.ClaimAmount,
                 Currency = claim.Currency,
                 AccountHolder = claim.AccountHolder,
                 AccountNumber = claim.AccountNumber,
                 BranchCode = claim.BranchCode,
-                CallbackUrl = input.CallbackUrl
+                CallbackUrl = callbackUrl
             },
             cancellationToken);
 
-        if (result.IsAccepted && result.PaymentReference is not null)
+        if (result.IsAccepted)
         {
-            claim.MarkPaymentRequested(result.PaymentReference, DateTimeOffset.UtcNow);
+            claim.MarkPaymentRequested(result.PaymentReference!, DateTimeOffset.UtcNow);
+            await _claimsRepository.SaveChangesAsync(cancellationToken);
+            _logger.LogInformation("Payment request accepted for claim {ClaimId} with reference {PaymentReference}", claim.Id, result.PaymentReference);
         }
         else
         {
-            logger.LogWarning(
-                "Payment for claim {ClaimReference} was refused: {Reason}",
-                claim.ClaimReference,
-                result.FailureReason);
-
-            claim.MarkPaymentFailed(
-                result.FailureReason ?? "Payment provider refused the instruction.",
-                DateTimeOffset.UtcNow);
+            claim.MarkPaymentFailed(result.FailureReason!, DateTimeOffset.UtcNow);
+            await _claimsRepository.SaveChangesAsync(cancellationToken);
+            _logger.LogInformation("Payment request rejected for claim {ClaimId}: {FailureReason}", claim.Id, result.FailureReason);
         }
-
-        await claims.SaveChangesAsync(cancellationToken);
 
         return new PaymentInitiationActivityResults
         {
@@ -193,83 +162,14 @@ public sealed class ClaimActivities(
         };
     }
 
-    /// <summary>
-    /// Applies the settlement outcome the provider reported, completing or failing the claim.
-    /// </summary>
-    /// <param name="input">Claim and the notification the provider sent.</param>
-    /// <param name="cancellationToken">Token to cancel the activity.</param>
-    /// <returns>True when the payment settled.</returns>
-    [Function(CompletePayment)]
-    public async Task<bool> CompletePaymentAsync(
-        [ActivityTrigger] PaymentCompletionActivityInput input,
-        CancellationToken cancellationToken)
+    private async Task<Domain.Claim> LoadAsync(Guid claimId, CancellationToken cancellationToken)
     {
-        var claim = await LoadAsync(input.ClaimId, cancellationToken);
-
-        var settled = input.Notification.Status == PaymentStatus.Succeeded;
-
-        if (settled)
+        var claim = await _claimsRepository.GetByIdAsync(claimId, cancellationToken);
+        if (claim is null)
         {
-            claim.MarkPaid(input.Notification.SettledAt ?? DateTimeOffset.UtcNow);
-            claim.Completed(DateTimeOffset.UtcNow);
+            throw new InvalidOperationException($"Claim {claimId} not found");
         }
-        else
-        {
-            logger.LogWarning(
-                "Payment {PaymentReference} for claim {ClaimReference} did not settle: {Reason}",
-                input.Notification.PaymentReference,
-                claim.ClaimReference,
-                input.Notification.FailureReason);
-
-            claim.MarkPaymentFailed(
-                input.Notification.FailureReason ?? "Payment did not settle.",
-                DateTimeOffset.UtcNow);
-        }
-
-        await claims.SaveChangesAsync(cancellationToken);
-
-        return settled;
+        return claim;
     }
 
-    /// <summary>Rejects a claim that was refused on its merits.</summary>
-    /// <param name="input">Claim to reject, and why.</param>
-    /// <param name="cancellationToken">Token to cancel the activity.</param>
-    [Function(RejectClaim)]
-    public async Task RejectClaimAsync(
-        [ActivityTrigger] RejectClaimsActivityInput input,
-        CancellationToken cancellationToken)
-    {
-        var claim = await LoadAsync(input.ClaimId, cancellationToken);
-
-        logger.LogInformation(
-            "Rejecting claim {ClaimReference}: {Reason}", claim.ClaimReference, input.Reason);
-
-        claim.Reject(input.Reason, DateTimeOffset.UtcNow);
-
-        await claims.SaveChangesAsync(cancellationToken);
-    }
-
-    /// <summary>
-    /// Flags a claim as having missed its assessment deadline, leaving its state alone so it
-    /// stays in whichever queue it is already in.
-    /// </summary>
-    /// <param name="input">Claim that is overdue, and a note for its audit trail.</param>
-    /// <param name="cancellationToken">Token to cancel the activity.</param>
-    [Function(FlagSlaBreach)]
-    public async Task FlagSlaBreachAsync(
-        [ActivityTrigger] SlaBreachActivityInput input,
-        CancellationToken cancellationToken)
-    {
-        var claim = await LoadAsync(input.ClaimId, cancellationToken);
-
-        claim.FlagSlaBreach(DateTimeOffset.UtcNow);
-        claim.AddHistory(claim.Status, DateTimeOffset.UtcNow, input.Detail);
-
-        await claims.SaveChangesAsync(cancellationToken);
-    }
-
-    /// <summary>Loads the claim an activity is working on, or fails loudly if it has gone.</summary>
-    private async Task<Domain.Claim> LoadAsync(Guid claimId, CancellationToken cancellationToken) =>
-        await claims.GetByIdAsync(claimId, cancellationToken)
-        ?? throw new InvalidOperationException($"Claim {claimId} was not found.");
 }
