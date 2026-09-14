@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Claims.Contracts/Claims.Contracts.csproj" />
+    <Project Path="src/Claims.Domain/Claims.Domain.csproj" />
+    <Project Path="src/Claims.Functions/Claims.Functions.csproj" />
+    <Project Path="src/Claims.Integration/Claims.Integration.csproj" />
+    <Project Path="src/Claims.Persistence/Claims.Persistence.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Claims.UnitTests/Claims.UnitTests.csproj" />
+  </Folder>
+</Solution>

@@ -3,6 +3,7 @@ using Claims.Integration.Payments;
 using Claims.Integration.PolicyManager;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Http.Resilience;
 using Microsoft.Extensions.Options;
 
 namespace Claims.Integration;
@@ -28,9 +29,21 @@ public static class DependencyInjection
     {
         var section = configuration.GetSection(ConfigurationSection);
 
-        services.AddDownstream<IClientRegistryClient, ClientRegistryClient>(section, "ClientRegistry");
-        services.AddDownstream<IPolicyManagerClient, PolicyManagerClient>(section, "PolicyManager");
-        services.AddDownstream<IPaymentClient, PaymentClient>(section, "Payments");
+        // Validation and verification calls are POSTs only because they carry a body; they
+        // change nothing, so retrying them is safe.
+        services.AddDownstream<IClientRegistryClient, ClientRegistryClient>(section, "ClientRegistry", retryPosts: true);
+        services.AddDownstream<IPolicyManagerClient, PolicyManagerClient>(section, "PolicyManager", retryPosts: true);
+
+        // A payment instruction that times out may still have been taken, so it is never
+        // retried automatically: a second attempt could pay the claim twice.
+        services.AddDownstream<IPaymentClient, PaymentClient>(section, "Payments", retryPosts: false);
+
+        services.AddOptions<PaymentCallbackOptions>()
+            .Bind(configuration.GetSection(PaymentCallbackOptions.ConfigurationSection))
+            .Validate(
+                options => !string.IsNullOrWhiteSpace(options.CallbackSigningSecret),
+                $"{PaymentCallbackOptions.ConfigurationSection}:{nameof(PaymentCallbackOptions.CallbackSigningSecret)} must be configured.")
+            .ValidateOnStart();
 
         return services;
     }
@@ -39,10 +52,18 @@ public static class DependencyInjection
     /// Registers one typed client, bound to its own options and wrapped in the standard
     /// retry and circuit-breaker policy.
     /// </summary>
+    /// <param name="services">Container to register into.</param>
+    /// <param name="section">The <see cref="ConfigurationSection"/> configuration.</param>
+    /// <param name="name">Subsection holding this system's options.</param>
+    /// <param name="retryPosts">
+    /// Whether failed POSTs are retried. Only pass true where repeating the call cannot repeat
+    /// its effect.
+    /// </param>
     private static void AddDownstream<TClient, TImplementation>(
         this IServiceCollection services,
         IConfiguration section,
-        string name)
+        string name,
+        bool retryPosts)
         where TClient : class
         where TImplementation : class, TClient
     {
@@ -60,6 +81,12 @@ public static class DependencyInjection
             client.BaseAddress = options.BaseAddress;
             client.Timeout = options.Timeout;
         })
-        .AddStandardResilienceHandler();
+        .AddStandardResilienceHandler(options =>
+        {
+            if (!retryPosts)
+            {
+                options.Retry.DisableForUnsafeHttpMethods();
+            }
+        });
     }
 }

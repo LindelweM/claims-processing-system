@@ -19,6 +19,28 @@ public interface IClaimRepository
     /// <returns>The claim, or null when no claim has that reference.</returns>
     Task<Claim?> GetByReferenceAsync(string claimReference, CancellationToken cancellationToken = default);
 
+    /// <summary>Loads the claim a channel already lodged under its own reference.</summary>
+    /// <param name="channel">Channel the claim was lodged through.</param>
+    /// <param name="channelReference">The channel's reference for the submission.</param>
+    /// <param name="cancellationToken">Token to cancel the operation.</param>
+    /// <returns>The claim, or null when the channel has not lodged that reference.</returns>
+    Task<Claim?> GetByChannelReferenceAsync(
+        string channel,
+        string channelReference,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Adds and saves a newly lodged claim, unless the channel has already lodged a claim under
+    /// the same reference.
+    /// </summary>
+    /// <param name="claim">Claim to add.</param>
+    /// <param name="cancellationToken">Token to cancel the operation.</param>
+    /// <returns>
+    /// True when the claim was saved; false when a claim with the same channel reference already
+    /// exists, typically because a concurrent resubmission saved first.
+    /// </returns>
+    Task<bool> TryAddAsync(Claim claim, CancellationToken cancellationToken = default);
+
     /// <summary>Adds a newly lodged claim to the store.</summary>
     /// <param name="claim">Claim to add.</param>
     /// <param name="cancellationToken">Token to cancel the operation.</param>
