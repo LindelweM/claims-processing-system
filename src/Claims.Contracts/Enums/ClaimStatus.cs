@@ -5,24 +5,15 @@ namespace Claims.Contracts.Enums;
 /// </summary>
 public enum ClaimStatus
 {
-    Unknown = 0,
-    Draft = 1,
-    Submitted = 2,
-    Received = 3,
-    Validating = 4,
-    UnderReview = 5,
-    PendingInformation = 6,
-    Approved = 7,
-    PartiallyApproved = 8,
-    Rejected = 9,
-    Settled = 10,
-    Closed = 11,
-    Cancelled = 12,
-    ClientValidated = 13,
-    PolicyValidated = 14,
-    PaymentRequested = 15,
-    Paid = 16,
-    PaymentFailed = 17,
-    Completed = 18,
-    Failed = 19
+    Received = 0,
+    Validating = 1,
+    ClientValidated = 2,
+    PolicyValidated = 3,
+    Approved = 4,
+    Rejected = 5,
+    PaymentRequested = 6,
+    Paid = 7,
+    PaymentFailed = 8,
+    Completed = 9,
+    Failed = 10
 }

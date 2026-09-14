@@ -8,6 +8,8 @@ public enum ClaimType
     Unknown = 0,
     Death = 1,
     Funeral = 2,
-    DreadDisease = 3,
-    Disability = 4
+    Disability = 3,
+    DreadDisease = 4,
+    Hospitalisation = 5,
+    Retrenchment = 6
 }
