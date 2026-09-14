@@ -213,7 +213,7 @@ public sealed class Claim
     {
         ApprovedAmount = approvedAmount;
         Currency = currency;
-        Transition(ClaimStatus.ClientValidated, occurredAt, $"Policy validated, approved {approvedAmount:0.00} {currency}");
+        Transition(ClaimStatus.PolicyValidated, occurredAt, $"Policy validated, approved {approvedAmount:0.00} {currency}");
     }
 
     /// <summary>
