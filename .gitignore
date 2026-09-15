@@ -507,3 +507,7 @@ __queuestorage__/
 
 appsettings.Local.json
 appsettings.*.Local.json
+
+# Build and CI outputs
+TestResults/
+.azurite/

@@ -6,7 +6,4 @@
     <Project Path="src/Claims.Integration/Claims.Integration.csproj" />
     <Project Path="src/Claims.Persistence/Claims.Persistence.csproj" />
   </Folder>
-  <Folder Name="/tests/">
-    <Project Path="tests/Claims.UnitTests/Claims.UnitTests.csproj" />
-  </Folder>
 </Solution>
