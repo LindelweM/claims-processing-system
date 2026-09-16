@@ -49,7 +49,6 @@ Built on .NET 10 with Azure Functions (isolated worker), Durable Functions, EF C
 | **Claims.Persistence** | Domain, Contracts | `ClaimsDbContext`, EF configurations, `IClaimRepository`, migrations |
 | **Claims.Integration** | Contracts | Typed HTTP clients for the three downstream systems, plus in-memory stubs |
 | **Claims.Functions** | all of the above | HTTP endpoints, the orchestrator, the activities, intake validation |
-| **Claims.UnitTests** | Domain, Integration, Functions | xUnit tests for the domain rules, SLA, callback signing, validation and payment activity |
 
 Dependencies point inwards. `Claims.Domain` knows nothing about EF Core, HTTP or Azure — it can be
 unit tested with no infrastructure at all.
@@ -345,12 +344,6 @@ authenticated by its signature instead.
 | `GET` | `/api/claims/{claimId}` | Function key | Current status and full audit trail |
 | `POST` | `/api/claims/{claimId}/payment-callback` | HMAC signature | Provider's settlement notification |
 
-### Tests
-
-```bash
-dotnet test ClaimsProcessingSystem.slnx
-```
-
 ---
 
 ## Azure integration in the code
@@ -493,8 +486,10 @@ Worth knowing before this handles real claims:
   separate table with tighter access, before production.
 - **No SLA scanner for claims outside an orchestration.** The SLA timer only covers a claim while
   its orchestration is running.
-- **Unit tests only.** The orchestrator and the HTTP functions have no tests; they need the
-  Durable Task test harness or an integration run against Azurite and SQL Server.
+- **No automated tests in this submission.** `Claims.Domain` is the natural place to start — the
+  aggregate, `PriorityResolver` and `SlaPolicy` have no infrastructure dependencies. The
+  orchestrator needs the Durable Task test harness, and the HTTP functions an integration run
+  against Azurite and SQL Server.
 - **A zero-second stub settlement delay races the payment reference.** The callback is checked
   against the reference the payment activity saves, so a callback sent before that save is refused.
 - **A callback can still be lost in a narrow window.** If it arrives while the orchestration is
