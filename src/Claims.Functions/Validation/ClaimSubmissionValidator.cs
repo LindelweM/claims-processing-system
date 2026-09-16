@@ -41,10 +41,10 @@ public static class ClaimSubmissionValidator
 
     private static void AnnotateRequired(object? part, string name, Dictionary<string, List<string>> errors)
     {
-        // A part sent as an explicit null gets past deserialisation, so it is caught here.
+        // A part sent as an explicit null is already reported by its [Required] attribute on the
+        // submission; there is nothing inside it to check.
         if (part is null)
         {
-            Add(errors, name, $"The {name} field is required.");
             return;
         }
 

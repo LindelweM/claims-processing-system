@@ -394,26 +394,22 @@ dotnet dotnet-ef migrations script --idempotent --project src/Claims.Persistence
 
 ---
 
-## Cloud deployment approach
+## Running on Azure
 
-How the service would be hosted, secured and delivered on Azure.
-
-### Target architecture
+The service is deployed and working end to end, on the stubs. `infra/` holds the Bicep that
+creates it: one resource group, one module per concern.
 
 ```mermaid
 flowchart LR
-    WF[Web form] -->|HTTPS| APIM[API Management<br/>Entra ID, rate limits]
-    CS[Existing Claims System<br/>UI and API] -->|status queries| APIM
-    APIM --> FA
+    WF[Web form] -->|HTTPS + function key| FA
 
     subgraph RG[Resource group]
         FA[Function App<br/>Flex Consumption<br/>endpoints, orchestrator, activities]
         MI((User-assigned<br/>managed identity))
-        ST[(Storage<br/>host + Durable task hub)]
+        ST[(Storage<br/>Durable task hub)]
         SQL[(Azure SQL<br/>claims + audit trail)]
         KV[Key Vault<br/>callback signing secret]
-        AI[Application Insights<br/>+ Log Analytics]
-        SB[[Service Bus<br/>claim status events]]
+        AI[Application Insights]
     end
 
     FA -.runs as.-> MI
@@ -421,40 +417,67 @@ flowchart LR
     MI --> SQL
     MI --> KV
     MI --> AI
-    FA --> SB
-    SB --> CS
 
-    FA -->|HTTPS| CR[Client Registry]
-    FA -->|HTTPS| PM[Policy Manager]
-    FA -->|HTTPS| PAY[Payment System]
-    PAY -->|signed callback| APIM
+    FA -->|HTTPS| DS[Client Registry<br/>Policy Manager<br/>Payment System<br/>stubbed for now]
+    DS -->|signed callback| FA
 ```
 
-### Hosting
+**Azure Functions on Flex Consumption.** Claims arrive in bursts, so the service scales to zero when
+idle and out quickly under load. The plan supports Durable Functions and VNet integration, which the
+older Consumption plan does not. A maximum instance count caps concurrent load on SQL and the
+downstream systems.
 
-**Azure Functions on the Flex Consumption plan.** Claims arrive in bursts, so the service should
-scale to zero when idle and out quickly under load. Flex Consumption does both, supports Durable
-Functions, and adds VNet integration, which the older Consumption plan lacks. A maximum instance
-count caps concurrent load on SQL and the downstream systems.
-
-### Identity and secrets
-
-The Function App would run as a **user-assigned managed identity**, and every connection would use it:
+**No secrets in configuration.** The app runs as a user-assigned managed identity, and every
+connection uses it:
 
 | Connection | How |
 |---|---|
-| Storage (host + Durable) | `AzureWebJobsStorage__credential=managedidentity`, with shared-key access disabled on the account |
-| Azure SQL | `Authentication=Active Directory Managed Identity`, with the server set to Entra-only authentication |
+| Storage (host + Durable) | `AzureWebJobsStorage__credential=managedidentity`, shared-key access disabled on the account |
+| Azure SQL | `Authentication=Active Directory Managed Identity`, server set to Entra-only authentication |
 | Key Vault | `@Microsoft.KeyVault(SecretUri=…)` app setting for the callback signing secret |
-| Application Insights | `Authorization=AAD`, with key-based ingestion disabled |
+| Application Insights | `Authorization=AAD`, key-based ingestion disabled |
 
-The identity would hold only what it needs: Blob Data Owner, Queue and Table Data Contributor on the
+The identity holds only what it needs: Blob Data Owner, Queue and Table Data Contributor on the
 storage account, Key Vault Secrets User on the vault, Monitoring Metrics Publisher on Application
-Insights, and `db_datareader`/`db_datawriter` in the database. The result is no passwords or keys in
-app settings at all; the signing secret is the only genuine secret, and it lives in Key Vault.
+Insights, and `db_datareader`/`db_datawriter` in the database. It is user-assigned rather than
+system-assigned so its role assignments and database user can be created before the app exists and
+survive the app being recreated.
 
-A user-assigned identity rather than a system-assigned one, so role assignments and the database
-user can be created before the app exists and survive the app being recreated.
+### Deploying
+
+```bash
+az group create --name rg-claims-prod --location southafricanorth
+
+export SQL_ADMIN_LOGIN='you@example.com' \
+       SQL_ADMIN_OBJECT_ID='<your Entra object id>' \
+       PAYMENT_CALLBACK_SIGNING_SECRET="$(openssl rand -hex 32)"
+
+az deployment group create --resource-group rg-claims-prod \
+  --template-file infra/main.bicep --parameters infra/main.bicepparam \
+  --parameters sqlAdminPrincipalType=User
+```
+
+Then apply the migration script to the new database, create the database user for the app identity
+(from its client id, because database users cannot be created through ARM), and deploy the code:
+
+```bash
+dotnet publish src/Claims.Functions/Claims.Functions.csproj -c Release -o publish
+(cd publish && zip -qr ../functions.zip .)
+az functionapp deployment source config-zip -g rg-claims-prod -n <function app name> --src functions.zip
+```
+
+Switching from the stubs to the real systems is configuration only: set `Integration__UseStubs` to
+`false` and supply the three base addresses.
+
+### For production
+
+Deliberately left out, in the order I would add them:
+
+1. **API Management** with Entra ID in front of the endpoints, replacing function keys.
+2. **Private endpoints** and VNet integration for SQL, Storage and Key Vault.
+3. **Alerts** on SLA breaches, claims marked `Failed`, and open circuit breakers.
+4. **CI/CD** with OIDC federation, so deployments are not run from a laptop.
+5. **Claim status events** on Service Bus, so the existing Claims System is told rather than polling.
 
 ---
 
@@ -463,7 +486,7 @@ user can be created before the app exists and survive the app being recreated.
 Worth knowing before this handles real claims:
 
 - **Function keys are shared secrets, not user identity.** Any holder of the key can read any
-  claim, until API Management with Entra ID is in front (see *Cloud deployment approach*).
+  claim, until API Management with Entra ID is in front (see *For production*).
 - **Idempotency depends on the channel sending `channelReference`.** A submission without one is
   still created every time it is sent, and if its orchestration fails to start, nothing retries it.
 - **Bank account numbers are stored in plain text** in the `Claims` table. Always Encrypted, or a
